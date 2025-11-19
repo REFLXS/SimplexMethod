@@ -3,19 +3,17 @@ package main
 import (
 	"fmt"
 	"math/rand"
-	"time"
 )
 
 func init() {
-	rand.Seed(time.Now().UnixNano())
 	resetState(3, 3)
 }
 
 func resetState(rows, cols int) {
-	mat := make(Matrix, rows+2) // +2 для строк f и g
+	mat := make(Matrix, rows+2)
 
 	for i := range mat {
-		mat[i] = make([]float64, cols+1) // +1 для правой части
+		mat[i] = make([]float64, cols+1)
 
 		for j := range mat[i] {
 			if i < rows {
@@ -26,19 +24,13 @@ func resetState(rows, cols int) {
 				}
 			} else if i == rows {
 				if j == 0 {
-					mat[i][j] = 0 // Свободный член целевой функции
+					mat[i][j] = 0
 				} else {
 					mat[i][j] = -float64(rand.Intn(10) + 1)
 				}
 			} else {
 				mat[i][j] = 0
 			}
-		}
-	}
-
-	for i := 0; i < rows; i++ {
-		if i < cols {
-			mat[i][i+1] = 1
 		}
 	}
 

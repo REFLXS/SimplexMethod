@@ -3,7 +3,10 @@ package main
 import (
 	"fmt"
 	"math"
+	"strings"
 )
+
+const eps = 1e-9
 
 func solveSimplex(a Matrix, rLabels, cLabels []string) ([]SimplexStep, *SimplexResult, error) {
 	steps := []SimplexStep{}
@@ -13,82 +16,261 @@ func solveSimplex(a Matrix, rLabels, cLabels []string) ([]SimplexStep, *SimplexR
 	workingColLabels := cloneSlice(cLabels)
 
 	fIndex, gIndex := -1, -1
-	for i, label := range workingRowLabels {
-		if label == "f" {
+	for i, lab := range workingRowLabels {
+		if lab == "f" {
 			fIndex = i
-		} else if label == "g" {
+		} else if lab == "g" {
 			gIndex = i
 		}
 	}
-
 	if fIndex == -1 {
 		return nil, nil, fmt.Errorf("не найдена целевая функция f")
 	}
+	if gIndex == -1 {
+		workingMatrix = append(workingMatrix, make([]float64, len(workingMatrix[0])))
+		workingRowLabels = append(workingRowLabels, "g")
+		gIndex = len(workingRowLabels) - 1
+	}
+
+	for i := 0; i < fIndex; i++ {
+		if workingMatrix[i][0] < -eps {
+			for j := 0; j < len(workingMatrix[i]); j++ {
+				workingMatrix[i][j] = -workingMatrix[i][j]
+			}
+		}
+	}
 
 	steps = append(steps, SimplexStep{
-		Desc:      "Начальная симплекс-таблица",
+		Desc:      "Начальная симплекс-таблица (после нормализации RHS)",
 		Matrix:    cloneMatrix(workingMatrix),
 		RowLabels: cloneSlice(workingRowLabels),
 		ColLabels: cloneSlice(workingColLabels),
 	})
 
-	iteration := 0
-	maxIterations := 20
+	numCols := len(workingMatrix[0])
+	numRows := len(workingMatrix)
+	artificialCols := []int{}
+	artificialIsBasic := map[int]int{}
 
-	if gIndex != -1 && !isRowZero(workingMatrix[gIndex]) {
+	for i := 0; i < fIndex; i++ {
+		found := -1
+		for j := 1; j < numCols; j++ {
+			if math.Abs(workingMatrix[i][j]-1) < eps {
+				unit := true
+				for ii := 0; ii < fIndex; ii++ {
+					if ii == i {
+						continue
+					}
+					if math.Abs(workingMatrix[ii][j]) > eps {
+						unit = false
+						break
+					}
+				}
+				if unit {
+					found = j
+					break
+				}
+			}
+		}
+		if found != -1 {
+			workingRowLabels[i] = workingColLabels[found]
+			continue
+		}
+		for rr := 0; rr < numRows; rr++ {
+			if rr == i {
+				workingMatrix[rr] = append(workingMatrix[rr], 1.0)
+			} else {
+				workingMatrix[rr] = append(workingMatrix[rr], 0.0)
+			}
+		}
+		colName := fmt.Sprintf("a%d", i+1)
+		workingColLabels = append(workingColLabels, colName)
+		newColIndex := len(workingColLabels) - 1
+		artificialCols = append(artificialCols, newColIndex)
+		artificialIsBasic[newColIndex] = i
+		workingRowLabels[i] = colName
+		numCols++
+	}
+
+	for j := range workingMatrix[gIndex] {
+		workingMatrix[gIndex][j] = 0
+	}
+	for _, col := range artificialCols {
+		if row, ok := artificialIsBasic[col]; ok {
+			for j := 0; j < len(workingMatrix[row]); j++ {
+				workingMatrix[gIndex][j] -= workingMatrix[row][j]
+			}
+		}
+	}
+
+	steps = append(steps, SimplexStep{
+		Desc:      "Фаза I: добавлены искусственные переменные; построена g = сумма(искусственных)",
+		Matrix:    cloneMatrix(workingMatrix),
+		RowLabels: cloneSlice(workingRowLabels),
+		ColLabels: cloneSlice(workingColLabels),
+	})
+
+	iter := 0
+	maxIter := 500
+	for iter < maxIter {
+		iter++
+		pivotCol := findPivotColumnPhaseI(workingMatrix, gIndex)
+		if pivotCol == -1 {
+			break
+		}
+		pivotRow := findPivotRowForPhaseI(workingMatrix, pivotCol, fIndex)
+		if pivotRow == -1 {
+			return steps, nil, fmt.Errorf("вспомогательная задача неограничена (фаза I)")
+		}
+
+		desc := fmt.Sprintf("Фаза I - Итерация %d. Разрешающий элемент: %.6f [%s][%s]",
+			iter, workingMatrix[pivotRow][pivotCol], workingRowLabels[pivotRow], workingColLabels[pivotCol])
+
+		workingMatrix = pivot(workingMatrix, pivotRow, pivotCol)
+		workingRowLabels[pivotRow] = workingColLabels[pivotCol]
+		if strings.HasPrefix(workingColLabels[pivotCol], "a") {
+			artificialIsBasic[pivotCol] = pivotRow
+		} else {
+			for col, r := range artificialIsBasic {
+				if r == pivotRow && col != pivotCol {
+					delete(artificialIsBasic, col)
+				}
+			}
+		}
+
 		steps = append(steps, SimplexStep{
-			Desc:      "Фаза I: Решение вспомогательной задачи",
+			Desc:      desc,
+			Matrix:    cloneMatrix(workingMatrix),
+			RowLabels: cloneSlice(workingRowLabels),
+			ColLabels: cloneSlice(workingColLabels),
+			PivotRow:  pivotRow,
+			PivotCol:  pivotCol,
+		})
+	}
+
+	if math.Abs(workingMatrix[gIndex][0]) > 1e-7 {
+		steps = append(steps, SimplexStep{
+			Desc:      "Фаза I завершена: несовместна (g != 0)",
 			Matrix:    cloneMatrix(workingMatrix),
 			RowLabels: cloneSlice(workingRowLabels),
 			ColLabels: cloneSlice(workingColLabels),
 		})
+		return steps, nil, fmt.Errorf("задача несовместна (вспомогательная функция g = %.6f)", workingMatrix[gIndex][0])
+	}
 
-		for iteration < maxIterations {
-			iteration++
+	steps = append(steps, SimplexStep{
+		Desc:      "Фаза I завершена: допустимое базисное решение найдено (g = 0). Удаление искусственных переменных.",
+		Matrix:    cloneMatrix(workingMatrix),
+		RowLabels: cloneSlice(workingRowLabels),
+		ColLabels: cloneSlice(workingColLabels),
+	})
 
-			pivotCol := findPivotColumnPhase1(workingMatrix, gIndex)
-			if pivotCol == -1 {
-				break // Все коэффициенты неотрицательны
+	artSet := make(map[int]bool)
+	for _, col := range artificialCols {
+		artSet[col] = true
+	}
+
+	for col := range artSet {
+		row := -1
+		for i := 0; i < fIndex; i++ {
+			if math.Abs(workingMatrix[i][col]-1) < 1e-8 {
+				unit := true
+				for ii := 0; ii < fIndex; ii++ {
+					if ii == i {
+						continue
+					}
+					if math.Abs(workingMatrix[ii][col]) > 1e-8 {
+						unit = false
+						break
+					}
+				}
+				if unit {
+					row = i
+					break
+				}
 			}
+		}
+		if row == -1 {
+			continue
+		}
 
-			pivotRow := findPivotRow(workingMatrix, pivotCol, gIndex)
-			if pivotRow == -1 {
-				return steps, nil, fmt.Errorf("задача неограничена в фазе I")
+		replacement := -1
+		for j := 1; j < len(workingMatrix[0]); j++ {
+			if artSet[j] {
+				continue
 			}
+			if math.Abs(workingMatrix[row][j]) > eps {
+				replacement = j
+				break
+			}
+		}
+		if replacement != -1 {
+			workingMatrix = pivot(workingMatrix, row, replacement)
+			workingRowLabels[row] = workingColLabels[replacement]
 
-			desc := fmt.Sprintf("Фаза I - Итерация %d. Разрешающий элемент: %.3f[%s][%s]",
-				iteration, workingMatrix[pivotRow][pivotCol], workingRowLabels[pivotRow], workingColLabels[pivotCol])
+		} else {
 
-			workingMatrix = pivot(workingMatrix, pivotRow, pivotCol)
-			workingRowLabels[pivotRow], workingColLabels[pivotCol] = workingColLabels[pivotCol], workingRowLabels[pivotRow]
-
-			steps = append(steps, SimplexStep{
-				Desc:      desc,
-				Matrix:    cloneMatrix(workingMatrix),
-				RowLabels: cloneSlice(workingRowLabels),
-				ColLabels: cloneSlice(workingColLabels),
-				PivotRow:  pivotRow,
-				PivotCol:  pivotCol,
-			})
+			for ii := 0; ii < len(workingMatrix); ii++ {
+				workingMatrix[ii][col] = 0
+			}
+			workingRowLabels[row] = ""
 		}
 	}
 
-	iteration = 0
-	for iteration < maxIterations {
-		iteration++
+	newCols := []string{}
+	colMap := make([]int, len(workingColLabels))
+	newIndex := 0
+	for j := 0; j < len(workingColLabels); j++ {
+		if artSet[j] {
+			colMap[j] = -1
+			continue
+		}
+		colMap[j] = newIndex
+		newCols = append(newCols, workingColLabels[j])
+		newIndex++
+	}
 
-		pivotCol := findPivotColumnPhase2(workingMatrix, fIndex)
+	newMatrix := make(Matrix, len(workingMatrix))
+	for i := 0; i < len(workingMatrix); i++ {
+		newRow := make([]float64, len(newCols))
+		for j := 0; j < len(workingMatrix[i]); j++ {
+			if colMap[j] == -1 {
+				continue
+			}
+			newRow[colMap[j]] = workingMatrix[i][j]
+		}
+		newMatrix[i] = newRow
+	}
+	workingMatrix = newMatrix
+	workingColLabels = newCols
+
+	for i := 0; i < fIndex; i++ {
+		if workingRowLabels[i] == "" {
+			workingRowLabels[i] = fmt.Sprintf("y%d", i+1)
+		}
+	}
+
+	steps = append(steps, SimplexStep{
+		Desc:      "После удаления искусственных столбцов",
+		Matrix:    cloneMatrix(workingMatrix),
+		RowLabels: cloneSlice(workingRowLabels),
+		ColLabels: cloneSlice(workingColLabels),
+	})
+
+	iter = 0
+	for iter < maxIter {
+		iter++
+		pivotCol := findPivotColumnPhaseII(workingMatrix, fIndex)
 		if pivotCol == -1 {
 			solution, value := extractSolution(workingMatrix, workingRowLabels, workingColLabels, fIndex)
 			steps = append(steps, SimplexStep{
-				Desc:      fmt.Sprintf("Фаза II - Оптимум найден на итерации %d", iteration),
+				Desc:      fmt.Sprintf("Оптимум найден (Фаза II) на итерации %d", iter),
 				Matrix:    cloneMatrix(workingMatrix),
 				RowLabels: cloneSlice(workingRowLabels),
 				ColLabels: cloneSlice(workingColLabels),
 				Solution:  solution,
 				Value:     value,
 			})
-
 			return steps, &SimplexResult{
 				Solution: solution,
 				Value:    value,
@@ -100,7 +282,7 @@ func solveSimplex(a Matrix, rLabels, cLabels []string) ([]SimplexStep, *SimplexR
 		if pivotRow == -1 {
 			solution, value := extractSolution(workingMatrix, workingRowLabels, workingColLabels, fIndex)
 			steps = append(steps, SimplexStep{
-				Desc:      "Задача неограничена",
+				Desc:      "Задача неограничена (Фаза II)",
 				Matrix:    cloneMatrix(workingMatrix),
 				RowLabels: cloneSlice(workingRowLabels),
 				ColLabels: cloneSlice(workingColLabels),
@@ -114,15 +296,14 @@ func solveSimplex(a Matrix, rLabels, cLabels []string) ([]SimplexStep, *SimplexR
 			}, nil
 		}
 
-		desc := fmt.Sprintf("Фаза II - Итерация %d. Разрешающий элемент: %.3f[%s][%s]",
-			iteration, workingMatrix[pivotRow][pivotCol], workingRowLabels[pivotRow], workingColLabels[pivotCol])
+		desc := fmt.Sprintf("Фаза II - Итерация %d. Разрешающий элемент: %.6f [%s][%s]",
+			iter, workingMatrix[pivotRow][pivotCol], workingRowLabels[pivotRow], workingColLabels[pivotCol])
 
 		workingMatrix = pivot(workingMatrix, pivotRow, pivotCol)
-
-		workingRowLabels[pivotRow], workingColLabels[pivotCol] = workingColLabels[pivotCol], workingRowLabels[pivotRow]
+		workingRowLabels[pivotRow] = workingColLabels[pivotCol]
+		workingColLabels[pivotCol] = ""
 
 		solution, value := extractSolution(workingMatrix, workingRowLabels, workingColLabels, fIndex)
-
 		steps = append(steps, SimplexStep{
 			Desc:      desc,
 			Matrix:    cloneMatrix(workingMatrix),
@@ -143,65 +324,74 @@ func solveSimplex(a Matrix, rLabels, cLabels []string) ([]SimplexStep, *SimplexR
 	}, nil
 }
 
-func isRowZero(row []float64) bool {
-	for _, val := range row {
-		if math.Abs(val) > 1e-9 {
-			return false
+func findPivotRowForPhaseI(a Matrix, pivotCol int, fIndex int) int {
+	minRatio := math.MaxFloat64
+	pivotRow := -1
+	for i := 0; i < fIndex; i++ {
+		coeff := a[i][pivotCol]
+		if coeff <= eps {
+			continue
+		}
+		ratio := a[i][0] / coeff
+		if ratio >= -eps && ratio < minRatio {
+			minRatio = ratio
+			pivotRow = i
 		}
 	}
-	return true
+	return pivotRow
 }
 
-func findPivotColumnPhase1(a Matrix, gIndex int) int {
-	maxNeg := 0.0
+func findPivotColumnPhaseI(a Matrix, gIndex int) int {
 	pivotCol := -1
-
+	var mostNeg float64 = -eps
 	for j := 1; j < len(a[0]); j++ {
-		if a[gIndex][j] < -1e-9 && math.Abs(a[gIndex][j]) > math.Abs(maxNeg) {
-			maxNeg = a[gIndex][j]
+		if a[gIndex][j] < mostNeg {
+			mostNeg = a[gIndex][j]
 			pivotCol = j
 		}
 	}
-
 	return pivotCol
 }
 
-func findPivotColumnPhase2(a Matrix, fIndex int) int {
-	minVal := 0.0
+func findPivotColumnPhaseII(a Matrix, fIndex int) int {
 	pivotCol := -1
-
+	var mostNeg float64 = -eps
 	for j := 1; j < len(a[0]); j++ {
-		if a[fIndex][j] < minVal-1e-9 {
-			minVal = a[fIndex][j]
+		if a[fIndex][j] < mostNeg {
+			mostNeg = a[fIndex][j]
 			pivotCol = j
 		}
 	}
-
 	return pivotCol
 }
 
 func findPivotRow(a Matrix, pivotCol int, excludeRow int) int {
 	minRatio := math.MaxFloat64
 	pivotRow := -1
-
-	for i := 0; i < len(a); i++ {
-		if i == excludeRow || a[i][pivotCol] <= 1e-9 {
+	limit := excludeRow
+	if limit <= 0 || limit > len(a) {
+		limit = len(a)
+	}
+	for i := 0; i < limit; i++ {
+		coeff := a[i][pivotCol]
+		if coeff <= eps {
 			continue
 		}
-
-		ratio := a[i][0] / a[i][pivotCol]
-		if ratio >= -1e-9 && ratio < minRatio-1e-9 {
+		ratio := a[i][0] / coeff
+		if ratio >= -eps && ratio < minRatio {
 			minRatio = ratio
 			pivotRow = i
 		}
 	}
-
 	return pivotRow
 }
 
 func pivot(a Matrix, pivotRow, pivotCol int) Matrix {
 	result := cloneMatrix(a)
 	pivotElement := a[pivotRow][pivotCol]
+	if math.Abs(pivotElement) < 1e-15 {
+		return result
+	}
 
 	for j := 0; j < len(a[0]); j++ {
 		result[pivotRow][j] = a[pivotRow][j] / pivotElement
@@ -213,28 +403,30 @@ func pivot(a Matrix, pivotRow, pivotCol int) Matrix {
 		}
 		factor := a[i][pivotCol]
 		for j := 0; j < len(a[0]); j++ {
-			result[i][j] = a[i][j] - factor*result[pivotRow][j]
-
-			if math.Abs(result[i][j]) < 1e-10 {
-				result[i][j] = 0
+			val := a[i][j] - factor*result[pivotRow][j]
+			if math.Abs(val) < 1e-12 {
+				val = 0
 			}
+			result[i][j] = val
 		}
 	}
-
 	return result
 }
 
 func extractSolution(a Matrix, rLabels, cLabels []string, fIndex int) ([]float64, float64) {
 	numVars := len(cLabels) - 1
+	if numVars < 0 {
+		numVars = 0
+	}
 	solution := make([]float64, numVars)
-
-	value := -a[fIndex][0]
-
+	value := 0.0
+	if fIndex >= 0 && fIndex < len(a) {
+		value = -a[fIndex][0]
+	}
 	for i := 0; i < len(a); i++ {
 		if i == fIndex {
 			continue
 		}
-
 		if len(rLabels[i]) > 0 && rLabels[i][0] == 'x' {
 			varIndex := 0
 			fmt.Sscanf(rLabels[i], "x%d", &varIndex)
@@ -243,16 +435,5 @@ func extractSolution(a Matrix, rLabels, cLabels []string, fIndex int) ([]float64
 			}
 		}
 	}
-
-	for j := 1; j < len(cLabels); j++ {
-		if len(cLabels[j]) > 0 && cLabels[j][0] == 'x' {
-			varIndex := 0
-			fmt.Sscanf(cLabels[j], "x%d", &varIndex)
-			if varIndex > 0 && varIndex <= numVars {
-
-			}
-		}
-	}
-
 	return solution, value
 }
