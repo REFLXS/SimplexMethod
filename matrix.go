@@ -6,7 +6,7 @@ import (
 )
 
 func init() {
-	resetState(3, 3)
+	resetState(3, 2)
 }
 
 func resetState(rows, cols int) {
@@ -35,9 +35,12 @@ func resetState(rows, cols int) {
 	}
 
 	current = mat
+
+	// ТОЛЬКО x метки!
 	rowLabels = make([]string, rows+2)
 	for i := 0; i < rows; i++ {
-		rowLabels[i] = fmt.Sprintf("y%d", i+1)
+		// Базисные переменные начинаются с x_{cols+1}
+		rowLabels[i] = fmt.Sprintf("x%d", cols+i+1)
 	}
 	rowLabels[rows] = "f"
 	rowLabels[rows+1] = "g"
