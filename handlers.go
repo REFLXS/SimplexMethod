@@ -55,8 +55,12 @@ func handler(w http.ResponseWriter, r *http.Request) {
 			cols := len(current[0]) - 1
 			resetState(mainRows, cols)
 		case "addrow":
+<<<<<<< Updated upstream
 			mainRows := len(current) - 2
 			cols := len(current[0]) - 1
+=======
+			mainRows := len(current) - 1 // -1 вместо -2
+>>>>>>> Stashed changes
 			newRow := make([]float64, len(current[0]))
 			temp := make(Matrix, len(current)+1)
 			copy(temp, current[:mainRows])
@@ -72,8 +76,8 @@ func handler(w http.ResponseWriter, r *http.Request) {
 			rowLabels = newRowLabels
 
 		case "delrow":
-			if len(current) > 3 {
-				mainRows := len(current) - 2
+			if len(current) > 2 { // 2 вместо 3
+				mainRows := len(current) - 1 // -1 вместо -2
 				if mainRows > 1 {
 					current = append(current[:mainRows-1], current[mainRows:]...)
 					rowLabels = append(rowLabels[:mainRows-1], rowLabels[mainRows:]...)

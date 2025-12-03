@@ -273,9 +273,7 @@
             <div class="iteration-info">
                 <strong>Текущее решение:</strong><br>
                 {{range $i, $val := $step.Solution}}
-                    {{if gt (abs $val) 0.001}}
                     x{{add $i 1}} = {{formatFloat $val}}<br>
-                    {{end}}
                 {{end}}
                 <strong>Значение целевой функции: {{formatFloat $step.Value}}</strong>
             </div>
