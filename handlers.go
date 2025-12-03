@@ -55,12 +55,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 			cols := len(current[0]) - 1
 			resetState(mainRows, cols)
 		case "addrow":
-<<<<<<< Updated upstream
-			mainRows := len(current) - 2
-			cols := len(current[0]) - 1
-=======
 			mainRows := len(current) - 1 // -1 вместо -2
->>>>>>> Stashed changes
 			newRow := make([]float64, len(current[0]))
 			temp := make(Matrix, len(current)+1)
 			copy(temp, current[:mainRows])
@@ -70,8 +65,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 			newRowLabels := make([]string, len(rowLabels)+1)
 			copy(newRowLabels, rowLabels[:mainRows])
-			// ТОЛЬКО x метки!
-			newRowLabels[mainRows] = fmt.Sprintf("x%d", cols+mainRows+1)
+			newRowLabels[mainRows] = fmt.Sprintf("y%d", mainRows+1)
 			copy(newRowLabels[mainRows+1:], rowLabels[mainRows:])
 			rowLabels = newRowLabels
 
@@ -87,21 +81,13 @@ func handler(w http.ResponseWriter, r *http.Request) {
 			for i := range current {
 				current[i] = append(current[i], 0)
 			}
-			cols := len(colLabels) - 1
-			colLabels = append(colLabels, fmt.Sprintf("x%d", cols+1))
-
+			colLabels = append(colLabels, fmt.Sprintf("x%d", len(colLabels)))
 		case "delcol":
 			if len(current[0]) > 2 {
 				for i := range current {
 					current[i] = current[i][:len(current[i])-1]
 				}
 				colLabels = colLabels[:len(colLabels)-1]
-
-				// Обновляем метки строк после удаления столбца
-				cols := len(colLabels) - 1
-				for i := 0; i < len(rowLabels)-2; i++ {
-					rowLabels[i] = fmt.Sprintf("x%d", cols+i+1)
-				}
 			}
 		case "simplex":
 			steps, result, err := solveSimplex(current, rowLabels, colLabels)
@@ -112,17 +98,6 @@ func handler(w http.ResponseWriter, r *http.Request) {
 				pageData.SimplexResult = result
 				pageData.IsSimplex = true
 			}
-		case "test":
-			testMatrix := Matrix{
-				{15, 3, 1, 1, 0, 0},
-				{91, 13, 7, 0, 1, 0},
-				{15, 5, 3, 0, 0, 1},
-				{0, -2, -3, 0, 0, 0},
-				{0, 0, 0, 0, 0, 0},
-			}
-			current = testMatrix
-			rowLabels = []string{"x6", "x7", "x8", "f", "g"}        // ТОЛЬКО x!
-			colLabels = []string{"1", "x1", "x2", "x3", "x4", "x5"} // ТОЛЬКО x!
 		}
 
 		pageData.Matrix = current

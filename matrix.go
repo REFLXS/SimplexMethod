@@ -53,17 +53,9 @@ func resetState(rows, cols int) {
 
 	current = mat
 
-<<<<<<< Updated upstream
-	// ТОЛЬКО x метки!
-	rowLabels = make([]string, rows+2)
-	for i := 0; i < rows; i++ {
-		// Базисные переменные начинаются с x_{cols+1}
-		rowLabels[i] = fmt.Sprintf("x%d", cols+i+1)
-=======
 	rowLabels = make([]string, rows+1)
 	for i := 0; i < rows; i++ {
 		rowLabels[i] = fmt.Sprintf("x%d", cols+1+i)
->>>>>>> Stashed changes
 	}
 	rowLabels[rows] = "f"
 
